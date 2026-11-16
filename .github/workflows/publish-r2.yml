@@ -1,6 +1,10 @@
 name: Publish Sysfix release to Guts & Bolts R2
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-r2.yml
   workflow_dispatch:
     inputs:
       tag:
@@ -21,7 +25,7 @@ jobs:
       - name: Validate release tag
         shell: bash
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ github.event.inputs.tag || 'v1.2.0' }}
         run: |
           if [[ ! "$TAG" =~ ^v[0-9][0-9A-Za-z.-]{0,30}$ ]]; then
             echo "::error::Invalid release tag."

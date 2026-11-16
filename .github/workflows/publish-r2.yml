@@ -36,7 +36,7 @@ jobs:
       - name: Download official release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ github.event.inputs.tag || 'v1.2.0' }}
         run: |
           mkdir -p dist
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \

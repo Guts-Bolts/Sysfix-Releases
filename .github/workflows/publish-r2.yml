@@ -1,0 +1,92 @@
+name: Publish Sysfix release to Guts & Bolts R2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-r2.yml
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published Sysfix release tag to mirror
+        required: true
+        default: v1.2.0
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Mirror published Linux packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release tag
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || 'v1.2.0' }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9][0-9A-Za-z.-]{0,30}$ ]]; then
+            echo "::error::Invalid release tag."
+            exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Download official release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || 'v1.2.0' }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern 'sysfix-ai-*.rpm' \
+            --pattern 'sysfix-ai_*.deb' \
+            --pattern 'SHA256SUMS.txt' \
+            --pattern 'fyxa-model.tar.gz'
+          rpm_file="$(find dist -maxdepth 1 -type f -name 'sysfix-ai-*.rpm' -print -quit)"
+          deb_file="$(find dist -maxdepth 1 -type f -name 'sysfix-ai_*.deb' -print -quit)"
+          test -n "$rpm_file" && test -s "$rpm_file"
+          test -n "$deb_file" && test -s "$deb_file"
+          test -s dist/SHA256SUMS.txt
+          test -s dist/fyxa-model.tar.gz
+          echo "RPM_FILE=$rpm_file" >> "$GITHUB_ENV"
+          echo "DEB_FILE=$deb_file" >> "$GITHUB_ENV"
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Request short-lived GitHub OIDC token
+        id: oidc
+        shell: bash
+        run: |
+          response="$(curl --fail --silent --show-error \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gutsandbolts.net")"
+          token="$(jq -r '.value // empty' <<< "$response")"
+          test -n "$token" || { echo "::error::Could not obtain GitHub OIDC token."; exit 1; }
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release files to the G&B download bucket
+        shell: bash
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+        run: |
+          set -euo pipefail
+          for file in "$RPM_FILE" "$DEB_FILE" dist/SHA256SUMS.txt dist/fyxa-model.tar.gz; do
+            name="$(basename "$file")"
+            echo "Uploading $name"
+            curl --fail-with-body --silent --show-error \
+              -X PUT \
+              -H "Authorization: Bearer $OIDC_TOKEN" \
+              --data-binary "@$file" \
+              "https://gutsandbolts.net/download/upload/$name?version=$VERSION&product=sysfix"
+          done
+
+      - name: Verify versioned R2 downloads
+        shell: bash
+        run: |
+          for file in "$(basename "$RPM_FILE")" "$(basename "$DEB_FILE")" SHA256SUMS.txt fyxa-model.tar.gz; do
+            curl --fail --silent --show-error --head \
+              "https://gutsandbolts.net/download/products/sysfix/$VERSION/$file" >/dev/null
+            echo "Verified $file"
+          done

@@ -44,10 +44,14 @@ jobs:
             --pattern 'sysfix-ai_*.deb' \
             --pattern 'SHA256SUMS.txt' \
             --pattern 'fyxa-model.tar.gz'
-          test -s "dist/sysfix-ai-$VERSION-1.fc44.noarch.rpm"
-          test -s "dist/sysfix-ai_${VERSION}-1_all.deb"
+          rpm_file="$(find dist -maxdepth 1 -type f -name 'sysfix-ai-*.rpm' -print -quit)"
+          deb_file="$(find dist -maxdepth 1 -type f -name 'sysfix-ai_*.deb' -print -quit)"
+          test -n "$rpm_file" && test -s "$rpm_file"
+          test -n "$deb_file" && test -s "$deb_file"
           test -s dist/SHA256SUMS.txt
           test -s dist/fyxa-model.tar.gz
+          echo "RPM_FILE=$rpm_file" >> "$GITHUB_ENV"
+          echo "DEB_FILE=$deb_file" >> "$GITHUB_ENV"
           (cd dist && sha256sum -c SHA256SUMS.txt)
 
       - name: Request short-lived GitHub OIDC token
@@ -68,7 +72,7 @@ jobs:
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           set -euo pipefail
-          for file in "dist/sysfix-ai-$VERSION-1.fc44.noarch.rpm" "dist/sysfix-ai_${VERSION}-1_all.deb" dist/SHA256SUMS.txt dist/fyxa-model.tar.gz; do
+          for file in "$RPM_FILE" "$DEB_FILE" dist/SHA256SUMS.txt dist/fyxa-model.tar.gz; do
             name="$(basename "$file")"
             echo "Uploading $name"
             curl --fail-with-body --silent --show-error \
@@ -81,7 +85,7 @@ jobs:
       - name: Verify versioned R2 downloads
         shell: bash
         run: |
-          for file in "sysfix-ai-$VERSION-1.fc44.noarch.rpm" "sysfix-ai_${VERSION}-1_all.deb" SHA256SUMS.txt fyxa-model.tar.gz; do
+          for file in "$(basename "$RPM_FILE")" "$(basename "$DEB_FILE")" SHA256SUMS.txt fyxa-model.tar.gz; do
             curl --fail --silent --show-error --head \
               "https://gutsandbolts.net/download/products/sysfix/$VERSION/$file" >/dev/null
             echo "Verified $file"
